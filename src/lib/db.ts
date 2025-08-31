@@ -15,28 +15,28 @@ export interface Expense {
   id?: number;
   placeId: number;
   description: string;
-  // -- تم التعديل --
-  // سيتم تخزين التاريخ كنص لمنع مشاكل المنطقة الزمنية
   date: string; // Format: 'YYYY-MM-DD'
   payerId: number;
   amount: number;
   status: 'unpaid' | 'paid';
 }
 
+// الرصيد الافتتاحي فقط
 export interface MonthlySetting {
     id?: number;
     placeId: number;
-    month: string;
-    monthlyFee: number;
+    month: string; // "YYYY-MM"
     openingBalance: number;
 }
 
+// القطة المخصصة أصبحت هنا
 export interface MonthlyPersonData {
     id?: number;
     placeId: number;
     personId: number;
-    month: string;
+    month: string; // "YYYY-MM"
     feePaidDate: Date | null;
+    monthlyFee: number; // القطة الخاصة بهذا الشخص
 }
 
 export class AppDatabase extends Dexie {
@@ -48,12 +48,11 @@ export class AppDatabase extends Dexie {
 
   constructor() {
     super('sharedExpensesDB');
-    // -- تمت زيادة الإصدار إلى 6 لتطبيق التغييرات --
-    this.version(6).stores({
+    // -- تمت زيادة الإصدار إلى 9 لتطبيق التغييرات --
+    this.version(9).stores({
       places: '++id, name',
       people: '++id, placeId, name',
-      // -- تم تحديث الفهرس --
-      expenses: '++id, placeId, date, status',
+      expenses: '++id, date, status, placeId',
       monthlySettings: '++id, &[placeId+month]',
       monthlyPersonData: '++id, &[placeId+month+personId]',
     });

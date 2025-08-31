@@ -1,6 +1,6 @@
 <script lang="ts">
   import { db, type Expense } from '$lib/db';
-  import { activePlaceId, theme } from '$lib/stores'; // 1. استيراد الثيم
+  import { activePlaceId, theme } from '$lib/stores';
   import { writable, derived } from 'svelte/store';
   import { liveQuery } from 'dexie';
   import { browser } from '$app/environment';
@@ -9,7 +9,6 @@
   
   let canvasElement: HTMLCanvasElement;
   let expenseChart: any = null;
-
   let editingExpenseId: number | null = null;
   
   const peopleList = derived(activePlaceId, ($id, set) => {
@@ -24,92 +23,69 @@
     return query.subscribe(set);
   });
 
-  // --- 2. تم تحديث هذه الدالة بالكامل ---
-  // الآن تقرأ الألوان من الثيم وتطبقها على المخطط
-  function updateChart(data, currentTheme) {
-    // التأكد من أن الكود يعمل في المتصفح فقط وأن العناصر جاهزة
+  function updateChart(data) {
     if (!browser || !canvasElement || !data || typeof Chart === 'undefined') return;
-
-    // دالة مساعدة لجلب الألوان من متغيرات CSS
     const getCssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
-    // جلب الألوان المتوافقة مع الثيم الحالي
     const brandColor = getCssVar('--brand');
     const textColor = getCssVar('--text');
     const borderColor = getCssVar('--border');
-    const brandColorTransparent = brandColor + '20'; // إضافة شفافية
-
+    const brandColorTransparent = brandColor + '20';
     const monthlyTotals = (data || []).reduce((acc, expense) => {
         const month = expense.date.slice(0, 7);
         acc[month] = (acc[month] || 0) + expense.amount;
         return acc;
     }, {});
     const sortedMonths = Object.keys(monthlyTotals).sort();
-    
     if (expenseChart) expenseChart.destroy();
-    
     expenseChart = new Chart(canvasElement, {
         type: 'line',
-        data: {
-            labels: sortedMonths,
-            datasets: [{
+        data: { labels: sortedMonths, datasets: [{
                 label: 'إجمالي المصروفات الشهرية',
                 data: sortedMonths.map(month => monthlyTotals[month]),
-                borderColor: brandColor,
-                backgroundColor: brandColorTransparent,
-                fill: true, tension: 0.3
-            }]
+                borderColor: brandColor, backgroundColor: brandColorTransparent,
+                fill: true, tension: 0.3 }]
         },
-        options: { 
-            responsive: true, 
-            maintainAspectRatio: false,
-            // تطبيق الألوان على المحاور والخطوط
+        options: { responsive: true, maintainAspectRatio: false,
             scales: {
-                y: {
-                    ticks: { color: textColor },
-                    grid: { color: borderColor }
-                },
-                x: {
-                    ticks: { color: textColor },
-                    grid: { color: borderColor }
-                }
+                y: { ticks: { color: textColor }, grid: { color: borderColor } },
+                x: { ticks: { color: textColor }, grid: { color: borderColor } }
             },
-            plugins: {
-                legend: {
-                    labels: { color: textColor }
-                }
-            }
+            plugins: { legend: { labels: { color: textColor } } }
         }
     });
   }
 
-  // --- 3. الآن يتم تحديث المخطط عند تغيير البيانات أو الثيم ---
   $: if ($chartData) {
-    updateChart($chartData, $theme);
+    updateChart($chartData);
   }
 
   const reportData = derived([activePlaceId, selectedMonth], ([$id, $month], set) => {
     if (!$id || !$month) return set(null);
     const query = liveQuery(async () => {
         const people = await db.people.where('placeId').equals($id).toArray();
-        const expenses = await db.expenses.where('placeId').equals($id)
-            .filter(exp => exp.date.startsWith($month))
-            .toArray();
-        
-        const settings = await db.monthlySettings.get({ placeId: $id, month: $month });
+        const expenses = await db.expenses.where('placeId').equals($id).filter(exp => exp.date.startsWith($month)).toArray();
         const pData = await db.monthlyPersonData.where({ placeId: $id, month: $month }).toArray();
         
-        const monthlyFee = settings?.monthlyFee || 0;
-        const totalPeople = people.length || 1;
-        
         const summary = people.map(p => {
-            const hasPaidFee = pData.some(d => d.personId === p.id && d.feePaidDate);
-            const له = expenses.filter(e => e.payerId === p.id).reduce((sum, e) => sum + e.amount, 0);
-            const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-            const shareOfExpenses = totalPeople > 0 ? totalExpenses / totalPeople : 0;
-            const عليه = shareOfExpenses + (hasPaidFee ? 0 : monthlyFee);
+            const personMonthlyData = pData.find(d => d.personId === p.id);
+            const hasPaidFee = !!personMonthlyData?.feePaidDate;
+            const monthlyFeeForPerson = personMonthlyData?.monthlyFee || 0;
+
+            // --- تم تعديل منطق الحساب هنا ---
+            const له = expenses
+                .filter(e => e.payerId === p.id)
+                .reduce((sum, e) => sum + e.amount, 0);
+            
+            const المسدد = expenses
+                .filter(e => e.payerId === p.id && e.status === 'paid')
+                .reduce((sum, e) => sum + e.amount, 0);
+
+            // "عليه" الآن هو فقط مبلغ القطة إذا لم يدفعها
+            const عليه = hasPaidFee ? 0 : monthlyFeeForPerson;
+            
             const صافي = له - عليه;
-            return { name: p.name, له, عليه, صافي };
+            
+            return { name: p.name, له, المسدد, عليه, صافي };
         });
 
         const details = expenses.map(e => ({
@@ -125,10 +101,8 @@
 
   async function handleSave(expense: Expense) {
     await db.expenses.update(expense.id!, {
-        description: expense.description,
-        date: expense.date,
-        amount: Number(expense.amount),
-        payerId: Number(expense.payerId)
+        description: expense.description, date: expense.date,
+        amount: Number(expense.amount), payerId: Number(expense.payerId)
     });
     editingExpenseId = null;
   }
@@ -162,8 +136,9 @@
         {#each $reportData.summary as item}
           <div class="summary-card">
             <h4>{item.name}</h4>
-            <div class="row">
-              <span class="ok"><strong>له:</strong> {item.له.toFixed(2)}</span>
+            <div class="details-grid">
+              <span class="ok"><strong>له (دفع):</strong> {item.له.toFixed(2)}</span>
+              <span class="ok"><strong>المسدد له:</strong> {item.المسدد.toFixed(2)}</span>
               <span class="bad"><strong>عليه:</strong> {item.عليه.toFixed(2)}</span>
               <span class:ok={item.صافي >= 0} class:bad={item.صافي < 0}>
                 <strong>الصافي:</strong> {item.صافي.toFixed(2)}
@@ -208,10 +183,8 @@
                             <strong>{item.amount.toFixed(2)} ريال</strong>
                         </div>
                         <div class="body stack muted">
-                            <span>{item.date}</span>
-                            <span>|</span>
-                            <span>{item.payerName}</span>
-                            <span>|</span>
+                            <span>{item.date}</span> |
+                            <span>{item.payerName}</span> |
                             <span class:ok={item.status === 'paid'} class:bad={item.status === 'unpaid'}>
                                 {item.status === 'paid' ? 'مسدد' : 'غير مسدد'}
                             </span>
@@ -231,38 +204,18 @@
 </div>
 
 <style>
-    .chart-wrapper {
-        position: relative;
-        height: 250px;
+    .chart-wrapper { position: relative; height: 250px; }
+    .summary-card, .details-card { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    .summary-card:last-child, .details-card:last-child { border-bottom: none; padding-bottom: 0; }
+    .summary-card h4 { margin: 0 0 8px 0; }
+    .details-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 8px;
     }
-    .summary-card, .details-card {
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 12px;
-    }
-    .summary-card:last-child, .details-card:last-child {
-        border-bottom: none;
-        padding-bottom: 0;
-    }
-    .summary-card h4 {
-        margin: 0 0 8px 0;
-    }
-    .details-card .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 4px;
-    }
-    .details-card .body {
-        font-size: 14px;
-        margin-bottom: 12px;
-    }
-    .actions button {
-        padding: 4px 10px;
-        font-size: 12px;
-    }
-    .btn.danger {
-        background-color: var(--bad);
-        color: #fff;
-    }
+    .details-card .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .details-card .body { font-size: 14px; margin-bottom: 12px; }
+    .actions button { padding: 4px 10px; font-size: 12px; }
+    .btn.danger { background-color: var(--bad); color: #fff; }
 </style>
 
